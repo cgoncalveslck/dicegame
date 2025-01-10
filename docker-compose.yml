@@ -4,7 +4,7 @@ services:
       context: .
       dockerfile: Dockerfile
     ports:
-      - 8080:8080
+      - 81818:81818
 
   web:
     build:
@@ -15,6 +15,6 @@ services:
     volumes:
       - ./web/dice-game:/app
     environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:8080
+      - NEXT_PUBLIC_API_URL=http://localhost:81818
     depends_on:
       - api
