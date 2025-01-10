@@ -17,7 +17,7 @@ export default function LandingPage({ onStartGame, finalScore }: LandingPageProp
           <p className="mb-6">Test your luck by betting on odd or even dice rolls.</p>
           {finalScore !== null && (
             <p className="mb-6 text-xl font-bold">
-              Your final score: {finalScore > 0 ? '+' : ''}{finalScore} points
+              Your session profit: {finalScore > 0 ? '+' : ''}{finalScore} points
             </p>
           )}
           <Button onClick={onStartGame} size="lg">
@@ -28,4 +28,3 @@ export default function LandingPage({ onStartGame, finalScore }: LandingPageProp
     </div>
   )
 }
-
