@@ -4,13 +4,17 @@ import (
 	"cgoncalveslck/dicegame/cmd/internal/client"
 	"cgoncalveslck/dicegame/cmd/internal/handlers"
 	"log"
+	"log/slog"
 	"net/http"
 )
 
 func main() {
+	slog.SetLogLoggerLevel(slog.LevelDebug)
+
 	http.HandleFunc("/", handlers.Handler)
 
-	// i did this before manually cleaning up the sessions, i'll leave it for reader context
-	go client.SessionCleanup()
+	go client.SessionExpire()
+
+	slog.Info("Starting server on :8080")
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }

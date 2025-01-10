@@ -2,26 +2,43 @@ package client
 
 import (
 	"encoding/json"
-	"fmt"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 
 	"math/rand"
 
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 )
 
-const Timeout = 30 // short for debugging
+const (
+	_ cError = iota
+	NO_BALANCE
+	NO_SESSION
+	NOT_PLAYING
+	ALREADY_PLAYING
+	INTERNAL
+	INVALID_UUID
+	INVALID_JASON
+	NOT_AUTHENTICATED
+	ALREADY_LOGGED
+)
+
+type cError int
+
+const Timeout = 300 // 5min
+
 // ideally i'd not use UUID's for the the ID's and use an agreed list of constant codes for the "kind" of message
 type EndPlayMessage struct {
-	Kind     string   `json:"kind"`
-	ClientId ClientId `json:"clientId"`
+	Kind     string `json:"kind"`
+	ClientId string `json:"clientId"`
 }
 
 type EndPlayResultMessage struct {
 	Kind   string `json:"kind"`
-	Result string `json:"result"`
+	Profit int    `json:"result"`
+	Wallet int    `json:"wallet"`
 }
 
 type PlayResultMessage struct {
@@ -31,21 +48,13 @@ type PlayResultMessage struct {
 }
 
 type PlayMessage struct {
-	Kind     string   `json:"kind"`
-	ClientId ClientId `json:"clientId"`
-	Bet      int      `json:"bet"`
-	Choice   string   `json:"choice"`
-}
-
-type SessionStartMessage struct {
-	Kind     string   `json:"kind"`
-	ClientId ClientId `json:"clientId"`
+	Bet    int    `json:"bet"`
+	Choice string `json:"choice"`
 }
 
 type WalletMessage struct {
-	Kind     string   `json:"kind"`
-	ClientId ClientId `json:"clientId"`
-	Wallet   int      `json:"wallet"`
+	Kind   string `json:"kind"`
+	Wallet int    `json:"wallet"`
 }
 
 type PlayHistoryItem struct {
@@ -55,52 +64,66 @@ type PlayHistoryItem struct {
 	Roll   int    `json:"roll"`
 }
 
-type InfoMessage struct {
+type InfoResultMessage struct {
 	Kind string `json:"kind"`
 }
 
-type DefaultMessage struct {
-	ClientId ClientId `json:"clientId"`
-	Kind     string   `json:"kind"`
+type AuthResultMessage struct {
+	Kind     string `json:"kind"`
+	ClientId string `json:"clientId"`
 }
 
-// idk if this is very idiomatic or correct but I like giving a type to keys
-// to make it easier to understand what I'm doing with Store struct
-type ClientId string
+type ErrorResultMessage struct {
+	Kind    string `json:"kind"`
+	Message string `json:"message"`
+	Code    cError `json:"code"`
+}
+
+type DefaultMessage struct {
+	ClientId string `json:"clientId"`
+	Kind     string `json:"kind"` // change to const maybe
+	Wallet   int    `json:"wallet"`
+	Bet      int    `json:"bet"`
+	Choice   string `json:"choice"`
+}
 
 type Store struct {
-	Clients map[ClientId]*Client `json:"clients"`
-	Mx      *sync.Mutex          `json:"-"`
+	// map[clientId]*Client
+	Clients map[string]*Client `json:"clients"`
+	Mx      *sync.Mutex        `json:"-"`
 }
 
-func (s *Store) RemoveClient(id ClientId) {
+// Disconnects and removes a client from the store
+func (s *Store) DisconnectClient(id string) {
 	s.Mx.Lock()
 	defer s.Mx.Unlock()
 
 	client, ok := s.Clients[id]
-	if !ok {
-		return
+	if ok {
+		if client.Conn != nil {
+			_ = client.Conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+		}
+		delete(s.Clients, id)
 	}
 
-	if client.Conn != nil {
-		_ = client.Conn.Close()
-	}
-	delete(s.Clients, id)
+	slog.Debug("Client removed", slog.String("ClientId", id))
 }
 
 func (s *Store) AddClient(c *Client) {
 	s.Mx.Lock()
 	defer s.Mx.Unlock()
 	s.Clients[c.Id] = c
+
+	slog.Debug("Client added", slog.String("ClientId", c.Id))
 }
 
-func SessionCleanup() {
-	timer := time.NewTicker(30 * time.Second)
+func SessionExpire() {
+	timer := time.NewTicker(1 * time.Minute)
 
 	for range timer.C {
 		for _, c := range St.Clients {
 			if time.Now().Unix()-c.Last_seen > Timeout {
-				c.Disconnect()
+				St.DisconnectClient(c.Id)
 			}
 		}
 	}
@@ -108,54 +131,50 @@ func SessionCleanup() {
 
 type Client struct {
 	Conn      *websocket.Conn `json:"-"`
-	Id        ClientId        `json:"clientId"`
+	Id        string          `json:"clientId"`
 	Wallet    int             `json:"wallet"`
 	Last_seen int64           `json:"-"`
 	Session   *Session        `json:"-"`
+	Ip        string          `json:"-"`
 }
 
 func NewClient(c *websocket.Conn) *Client {
 	return &Client{
 		Conn:      c,
-		Id:        "e38dc209-4fd2-449b-874c-812ac890ead0", // debug
-		Wallet:    100,                                    // free money
+		Id:        uuid.NewString(),
+		Wallet:    100, // free money
 		Last_seen: time.Now().Unix(),
-		Session:   nil,
+		Ip:        c.RemoteAddr().String(),
 	}
 }
 
-func (c *Client) Play(message *[]byte) {
-	if c.Conn == nil {
-		log.Println("No connection")
-		return
-	}
-
+func (c *Client) Play(message *DefaultMessage) (*ErrorResultMessage, error) {
 	if c.Session == nil {
-		msg := &InfoMessage{
-			Kind: "NO_SESSION",
+		cErr := &ErrorResultMessage{
+			Kind:    "ERROR",
+			Message: "Attemped to play without session",
+			Code:    NO_SESSION,
 		}
 
-		c.SendMessage(msg)
-		log.Print("Tried to play without a session")
-		return
+		return cErr, nil
 	}
 
-	p := &PlayMessage{}
-	err := json.Unmarshal(*message, p)
-	if err != nil {
-		log.Printf("Unmarshal error: %v", err)
-		return
+	p := &PlayMessage{
+		Bet:    message.Bet,
+		Choice: message.Choice,
 	}
 
 	if p.Bet > c.Wallet {
-		message := &InfoMessage{
-			Kind: "NO_BALANCE",
+		cErr := &ErrorResultMessage{
+			Kind:    "ERROR",
+			Message: "Insufficient balance",
+			Code:    NO_BALANCE,
 		}
 
-		c.SendMessage(message)
-		return
+		return cErr, nil
 	}
 
+	// implement DDA for fun?
 	num := rand.Intn(6) + 1
 
 	var win bool
@@ -166,20 +185,16 @@ func (c *Client) Play(message *[]byte) {
 		win = num%2 == 0
 	}
 
-	if win {
-		c.Wallet += p.Bet
-	} else {
-		c.Wallet -= p.Bet
-	}
-
 	var res string
 	if win {
+		c.Session.Profit += p.Bet
 		res = "WIN"
 	} else {
+		c.Session.Profit -= p.Bet
 		res = "LOSE"
 	}
 
-	walletMessage := PlayResultMessage{
+	pResult := PlayResultMessage{
 		Kind:   "ROLL",
 		Result: res,
 		Roll:   num,
@@ -193,31 +208,40 @@ func (c *Client) Play(message *[]byte) {
 	}
 
 	c.Session.PlayHistory.Add(PlayHistoryItem)
-	c.SendMessage(walletMessage)
-}
-
-func (c *Client) GetWallet() {
-	if c.Conn == nil {
-		return
+	err := c.SendMessage(pResult)
+	if err != nil {
+		return nil, err
 	}
 
-	walletMessage := WalletMessage{
-		Kind:     "WALLET",
-		ClientId: c.Id,
-		Wallet:   c.Wallet,
-	}
-
-	c.SendMessage(walletMessage)
+	slog.Debug("Completed Play", slog.String("id", c.Id), slog.Int("wallet", c.Wallet), slog.String("choice", p.Choice), slog.Int("bet", p.Bet), slog.String("result", res), slog.Int("roll", num))
+	return nil, nil
 }
 
-func (c *Client) StartSession() {
+func (c *Client) GetWallet() error {
+	wMessage := WalletMessage{
+		Kind:   "WALLET",
+		Wallet: c.Wallet,
+	}
+
+	err := c.SendMessage(wMessage)
+	if err != nil {
+		slog.Error("GetWallet: Failed to send WalletMessage")
+		return err
+	}
+
+	slog.Debug("GetWallet", slog.String("id", c.Id), slog.Int("wallet", c.Wallet))
+	return nil
+}
+
+func (c *Client) StartSession() (*ErrorResultMessage, error) {
 	if c.Session != nil && c.Session.Playing {
-		msg := &InfoMessage{
-			Kind: "ALREADY_PLAYING",
+		cError := &ErrorResultMessage{
+			Kind:    "ERROR",
+			Message: "Already playing",
+			Code:    ALREADY_PLAYING,
 		}
 
-		c.SendMessage(msg)
-		return
+		return cError, nil
 	}
 
 	c.Session = &Session{
@@ -227,48 +251,97 @@ func (c *Client) StartSession() {
 			Items: make([]PlayHistoryItem, 0),
 		},
 	}
-}
 
-func (c *Client) EndSession() {
-	if !c.Session.Playing {
-		c.SendMessage(&InfoMessage{
-			Kind: "NOT_PLAYING",
-		})
-		return
+	err := c.SendMessage(&InfoResultMessage{
+		Kind: "STARTPLAY",
+	})
+	if err != nil {
+		return nil, err
 	}
 
-	c.Session.Playing = false
-	c.Wallet += c.Session.Profit
-	c.Session.Profit = 0
-	c.Session.PlayHistory = nil
-
-	c.SendMessage(&InfoMessage{
-		Kind: "ENDPLAY",
-	})
+	slog.Debug("Session started", slog.String("id", c.Id))
+	return nil, nil
 }
 
-func (c *Client) SendMessage(msg interface{}) {
+func (c *Client) EndSession() (*ErrorResultMessage, error) {
+	if !c.Session.Playing {
+		cError := &ErrorResultMessage{
+			Kind:    "ERROR",
+			Message: "Not playing",
+			Code:    NOT_PLAYING,
+		}
+		return cError, nil
+	}
+
+	newBalance := c.Wallet + c.Session.Profit
+	c.Wallet = newBalance
+
+	err := c.SendMessage(&EndPlayResultMessage{
+		Kind:   "ENDPLAY",
+		Profit: c.Session.Profit,
+		Wallet: c.Wallet,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	c.Session.Reset()
+	slog.Debug("Session ended", slog.String("id", c.Id))
+	return nil, nil
+}
+
+func SendConnMessage(conn *websocket.Conn, msg interface{}) error {
 	data, err := json.Marshal(msg)
 	if err != nil {
-		log.Printf("Marshal error: %v", err)
-		return
+		return err
+	}
+
+	err = conn.WriteMessage(websocket.TextMessage, data)
+	if err != nil {
+		return err
+	}
+
+	slog.Debug("Sent message", slog.String("message", string(data)))
+	return nil
+}
+
+func (c *Client) SendMessage(msg interface{}) error {
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return err
 	}
 
 	err = c.Conn.WriteMessage(websocket.TextMessage, data)
 	if err != nil {
-		// handle this properly
-		log.Printf("Write error: %v", err)
+		return err
 	}
+
+	slog.Debug("Sent message", slog.String("client", c.Id), slog.String("message", string(data)))
+	return nil
 }
 
-func (c *Client) Disconnect() {
-	fmt.Println("Disconnecting client", c.Id) // debug
-	if c.Conn != nil {
-		_ = c.Conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseGoingAway, "TIMEOUT"))
-		c.Conn.Close()
+func (c *Client) SendErrorMessage(cErr *ErrorResultMessage) error {
+	err := c.SendMessage(cErr)
+	if err != nil {
+		return err
 	}
 
-	St.RemoveClient(c.Id)
+	return nil
+}
+
+func (c *Client) SendIErrorMessage(err error) {
+	// idk if this only makes sense to me but the logic behind using these 2 erros types
+	// is like differentiating between a 400's and 500's
+	// 400's i assume the program is actually working and report to the client with a SendIErrorMessage
+	// 500's i try reporting to the client but assume it might not work and log the error
+
+	cErr := &ErrorResultMessage{
+		Kind:    "ERROR",
+		Message: err.Error(),
+		Code:    INTERNAL,
+	}
+
+	c.SendErrorMessage(cErr)
 }
 
 // added this for fun i guess, could be cool to show on UI
@@ -281,6 +354,8 @@ func (ph *PlayHistory) Add(item PlayHistoryItem) {
 		ph.Items = ph.Items[1:]
 	}
 	ph.Items = append(ph.Items, item)
+
+	slog.Debug("PlayHistory: Added item", slog.String("choice", item.Choice), slog.Int("bet", item.Bet), slog.String("result", item.Result), slog.Int("roll", item.Roll))
 }
 
 type Session struct {
@@ -289,7 +364,40 @@ type Session struct {
 	PlayHistory *PlayHistory
 }
 
+func (s *Session) Reset() {
+	s.PlayHistory = nil
+	s.Profit = 0
+	s.Playing = false
+}
+
 var St = &Store{
-	Clients: make(map[ClientId]*Client),
+	Clients: make(map[string]*Client),
 	Mx:      &sync.Mutex{},
+}
+
+func InitC(conn *websocket.Conn, msg *DefaultMessage) (c *Client, cErr *ErrorResultMessage, err error) {
+	// implicit named return
+	isAuth := msg.Kind == "AUTH"
+
+	if isAuth {
+		c = NewClient(conn)
+		St.AddClient(c)
+
+		c.SendMessage(&AuthResultMessage{
+			Kind:     "AUTH",
+			ClientId: c.Id,
+		})
+
+		return
+	}
+
+	if !isAuth {
+		cErr = &ErrorResultMessage{
+			Kind:    "ERROR",
+			Message: "not authenticated",
+			Code:    NOT_AUTHENTICATED,
+		}
+		return
+	}
+	return
 }
