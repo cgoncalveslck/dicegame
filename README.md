@@ -38,7 +38,7 @@ go run main.go
 The API is deployed on [Hetzner](https://www.hetzner.com/) in my VPS using [Coolify](https://coolify.io/).<br>Redeploys setup on push/merge to master branch<br>
 
 
-#### Deployed at `https://kkc4so8s0g4c4k0kck0kkgcs.188.245.241.81.sslip.io`
+#### Deployed at `ws://kkc4so8s0g4c4k0kck0kkgcs.188.245.241.81.sslip.io`
 
   ## Frontend
 
@@ -66,7 +66,7 @@ npm install
 The UI is deployed on [Vercel](https://vercel.com/).<br>Redeploys also setup on push/merge to master branch<br>
 
 
-#### Deployed [here](dicegame-rho-seven.vercel.app)
+#### Deployed [here](https://dicegame-rho-seven.vercel.app)
   ---
 
   Docker (Optional)
