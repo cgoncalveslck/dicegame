@@ -227,3 +227,8 @@ The `code` field in the error response corresponds to one of the following const
 | 7    | `INVALID_JASON`   | The request contains invalid JSON syntax.                                   |
 | 8    | `NOT_AUTHENTICATED` | The client is not authenticated (missing or invalid `clientId`).          |
 | 9    | `ALREADY_LOGGED`  | Already got a `clientId`                       |
+
+
+## Excalidraw
+
+https://excalidraw.com/#json=6-G21rvkM22iVunuzzvjs,WrC-wmp-MJd6DvOfiOf9Kw
