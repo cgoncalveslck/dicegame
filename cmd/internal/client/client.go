@@ -2,6 +2,7 @@ package client
 
 import (
 	"encoding/json"
+	"log"
 	"log/slog"
 	"sync"
 	"time"
@@ -52,7 +53,7 @@ type PlayMessage struct {
 	Choice string `json:"choice"`
 }
 
-type WalletMessage struct {
+type WalletResultMessage struct {
 	Kind   string `json:"kind"`
 	Wallet int    `json:"wallet"`
 }
@@ -94,19 +95,24 @@ type Store struct {
 }
 
 // Disconnects and removes a client from the store
-func (s *Store) DisconnectClient(id string) {
+func (s *Store) DisconnectClient(c *Client) {
 	s.Mx.Lock()
 	defer s.Mx.Unlock()
 
-	client, ok := s.Clients[id]
-	if ok {
-		if client.Conn != nil {
-			_ = client.Conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
-		}
-		delete(s.Clients, id)
+	if c.Id == "" {
+		return
 	}
 
-	slog.Debug("Client removed", slog.String("ClientId", id))
+	client, ok := s.Clients[c.Id]
+	if ok {
+		if client.Conn != nil {
+			client.Conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+			client.Conn.Close()
+		}
+		delete(s.Clients, c.Id)
+	}
+
+	slog.Debug("Client removed", slog.String("ClientId", c.Id))
 }
 
 func (s *Store) AddClient(c *Client) {
@@ -123,7 +129,7 @@ func SessionExpire() {
 	for range timer.C {
 		for _, c := range St.Clients {
 			if time.Now().Unix()-c.Last_seen > Timeout {
-				St.DisconnectClient(c.Id)
+				St.DisconnectClient(c)
 			}
 		}
 	}
@@ -138,14 +144,11 @@ type Client struct {
 	Ip        string          `json:"-"`
 }
 
-func NewClient(c *websocket.Conn) *Client {
-	return &Client{
-		Conn:      c,
-		Id:        uuid.NewString(),
-		Wallet:    100, // free money
-		Last_seen: time.Now().Unix(),
-		Ip:        c.RemoteAddr().String(),
-	}
+func (c *Client) Init() {
+	c.Id = uuid.NewString()
+	c.Ip = c.Conn.RemoteAddr().String()
+	c.Wallet = 100
+	c.Last_seen = time.Now().Unix()
 }
 
 func (c *Client) Play(message *DefaultMessage) (*ErrorResultMessage, error) {
@@ -174,6 +177,7 @@ func (c *Client) Play(message *DefaultMessage) (*ErrorResultMessage, error) {
 		return cErr, nil
 	}
 
+	// should get 0 to 5 so +1
 	// implement DDA for fun?
 	num := rand.Intn(6) + 1
 
@@ -217,23 +221,74 @@ func (c *Client) Play(message *DefaultMessage) (*ErrorResultMessage, error) {
 	return nil, nil
 }
 
-func (c *Client) GetWallet() error {
-	wMessage := WalletMessage{
+func (c *Client) Auth(conn *websocket.Conn) (*Client, error) {
+	if c.Id == "" {
+		c.Init()
+		St.AddClient(c)
+
+		c.SendMessage(&AuthResultMessage{
+			Kind:     "AUTH",
+			ClientId: c.Id,
+		})
+
+		return c, nil
+	}
+
+	addr := conn.RemoteAddr().String()
+	// this is a bit RAW and ROUGH but you get the point
+	for _, c := range St.Clients {
+		if c.Ip == addr {
+			err := c.SendMessage(&ErrorResultMessage{
+				Kind:    "ERROR",
+				Message: "already logged",
+				Code:    ALREADY_LOGGED,
+			})
+			if err != nil {
+				log.Printf("SendErrorMessage error: %+v", err)
+			}
+			return c, nil
+		}
+	}
+	return c, nil
+}
+
+func (c *Client) GetWallet(msg *DefaultMessage) (*ErrorResultMessage, error) {
+	if msg.Kind != "WALLET" || msg.ClientId == "" {
+		cError := &ErrorResultMessage{
+			Kind:    "ERROR",
+			Message: "Invalid message",
+			Code:    INVALID_JASON,
+		}
+
+		return cError, nil
+	}
+
+	wMessage := WalletResultMessage{
 		Kind:   "WALLET",
 		Wallet: c.Wallet,
 	}
 
 	err := c.SendMessage(wMessage)
 	if err != nil {
-		slog.Error("GetWallet: Failed to send WalletMessage")
-		return err
+		slog.Error("GetWallet: Failed to send WalletResultMessage")
+		return nil, err
 	}
 
 	slog.Debug("GetWallet", slog.String("id", c.Id), slog.Int("wallet", c.Wallet))
-	return nil
+	return nil, nil
 }
 
-func (c *Client) StartSession() (*ErrorResultMessage, error) {
+func (c *Client) StartSession(msg *DefaultMessage) (*ErrorResultMessage, error) {
+	if msg.ClientId == "" || msg.Kind != "STARTPLAY" {
+		cError := &ErrorResultMessage{
+			Kind:    "ERROR",
+			Message: "Invalid message",
+			Code:    INVALID_JASON,
+		}
+
+		return cError, nil
+	}
+
 	if c.Session != nil && c.Session.Playing {
 		cError := &ErrorResultMessage{
 			Kind:    "ERROR",
@@ -263,7 +318,27 @@ func (c *Client) StartSession() (*ErrorResultMessage, error) {
 	return nil, nil
 }
 
-func (c *Client) EndSession() (*ErrorResultMessage, error) {
+func (c *Client) EndSession(msg *DefaultMessage) (*ErrorResultMessage, error) {
+	if msg.ClientId == "" || msg.Kind != "ENDPLAY" {
+		cError := &ErrorResultMessage{
+			Kind:    "ERROR",
+			Message: "Invalid message",
+			Code:    INVALID_JASON,
+		}
+
+		return cError, nil
+	}
+
+	if c.Session == nil {
+		cErr := &ErrorResultMessage{
+			Kind:    "ERROR",
+			Message: "Attemped to end session without session",
+			Code:    NO_SESSION,
+		}
+
+		return cErr, nil
+	}
+
 	if !c.Session.Playing {
 		cError := &ErrorResultMessage{
 			Kind:    "ERROR",
@@ -288,21 +363,6 @@ func (c *Client) EndSession() (*ErrorResultMessage, error) {
 	c.Session.Reset()
 	slog.Debug("Session ended", slog.String("id", c.Id))
 	return nil, nil
-}
-
-func SendConnMessage(conn *websocket.Conn, msg interface{}) error {
-	data, err := json.Marshal(msg)
-	if err != nil {
-		return err
-	}
-
-	err = conn.WriteMessage(websocket.TextMessage, data)
-	if err != nil {
-		return err
-	}
-
-	slog.Debug("Sent message", slog.String("message", string(data)))
-	return nil
 }
 
 func (c *Client) SendMessage(msg interface{}) error {
@@ -359,8 +419,8 @@ func (ph *PlayHistory) Add(item PlayHistoryItem) {
 }
 
 type Session struct {
-	Playing     bool
-	Profit      int // should always be 0 if not playing
+	Playing     bool // might be redundant atm
+	Profit      int  // should always be 0 if not playing
 	PlayHistory *PlayHistory
 }
 
@@ -375,29 +435,22 @@ var St = &Store{
 	Mx:      &sync.Mutex{},
 }
 
-func InitC(conn *websocket.Conn, msg *DefaultMessage) (c *Client, cErr *ErrorResultMessage, err error) {
-	// implicit named return
-	isAuth := msg.Kind == "AUTH"
-
-	if isAuth {
-		c = NewClient(conn)
-		St.AddClient(c)
-
-		c.SendMessage(&AuthResultMessage{
-			Kind:     "AUTH",
-			ClientId: c.Id,
-		})
-
-		return
-	}
-
-	if !isAuth {
-		cErr = &ErrorResultMessage{
+func HandleClientID(conn *websocket.Conn, msg *DefaultMessage) *ErrorResultMessage {
+	_, err := uuid.Parse(msg.ClientId)
+	if err != nil {
+		return &ErrorResultMessage{
 			Kind:    "ERROR",
-			Message: "not authenticated",
-			Code:    NOT_AUTHENTICATED,
+			Message: "invalid client id, must be UUID",
 		}
-		return
 	}
-	return
+
+	_, ok := St.Clients[msg.ClientId]
+	if !ok {
+		return &ErrorResultMessage{
+			Kind:    "ERROR",
+			Message: "client not found",
+		}
+	}
+
+	return nil
 }
