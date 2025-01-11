@@ -8,17 +8,14 @@ Simple dice game built for a technical challenge. Built with **Golang backend** 
 
     ├── cmd                                       # All Golang backend code
     ├── web                                       # Small Next.js app to interact with backend API
-    ├── DockerFile                                # Lazy dockerfile to build Golang program with hot-reloading using Air**
+    ├── DockerFile                                # Dockerfile to build Golang backend
     ├── docker-compose.yml
     └── README.md
 
-#### ** Air - [Live reload for Go apps](https://github.com/air-verse/air)
 
----
+## Backend
 
-## How to setup locally
-
-#### Backend (Go)
+### Setup locally
 
   1. Navigate to backend directory
   ```sh
@@ -36,10 +33,16 @@ go run main.go
   ```
 #### API will start on `localhost:8181`
 
+### Deployment
 
-  ---
+The API is deployed on [Hetzner](https://www.hetzner.com/) in my VPS using [Coolify](https://coolify.io/).<br>Redeploys setup on push/merge to master branch<br>
 
-  Frontend (Next.js)
+
+#### Deployed at `https://kkc4so8s0g4c4k0kck0kkgcs.188.245.241.81.sslip.io`
+
+  ## Frontend
+
+### Setup locally
 
   1. Navigate to frontend directory
   ```sh
@@ -58,17 +61,23 @@ npm install
 
   #### App will start on `localhost:3000`
 
+### Deployment
+
+The UI is deployed on [Vercel](https://vercel.com/).<br>Redeploys also setup on push/merge to master branch<br>
+
+
+#### Deployed [here](dicegame-rho-seven.vercel.app)
   ---
 
   Docker (Optional)
 
   1. Build and run
   ```sh
-  docker compose up -d
+  docker compose up --build -d
   ```
 
   #### App will start on `localhost:3000`, API will start on `localhost:8181`
-
+  <br>
 
 
 # API Documentation
