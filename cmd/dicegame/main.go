@@ -15,6 +15,6 @@ func main() {
 
 	go client.SessionExpire()
 
-	slog.Info("Starting server on :81818")
-	log.Fatal(http.ListenAndServe(":81818", nil))
+	slog.Info("Starting server on :8181")
+	log.Fatal(http.ListenAndServe(":8181", nil))
 }
