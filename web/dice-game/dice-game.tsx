@@ -17,7 +17,10 @@ export default function DiceGame() {
   const clientId = useRef<string | null>(null)
 
   useEffect(() => {
-    const ws = new WebSocket('ws://localhost:81818/')
+    const ws = new WebSocket(
+      process.env.NEXT_PUBLIC_API_URI ||
+      'ws://localhost:8181'
+    )
 
     const handleOpen = () => {
       setIsConnected(true)

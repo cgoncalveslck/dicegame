@@ -34,7 +34,7 @@ Simple dice game built for a technical challenge. Built with **Golang backend** 
   ```sh
 go run main.go
   ```
-#### API will start on `localhost:81818`
+#### API will start on `localhost:8181`
 
 
   ---
@@ -67,7 +67,7 @@ npm install
   docker compose up -d
   ```
 
-  #### App will start on `localhost:3000`, API will start on `localhost:81818`
+  #### App will start on `localhost:3000`, API will start on `localhost:8181`
 
 
 
