@@ -3,8 +3,6 @@ FROM golang:1.23-alpine
 
 WORKDIR /app
 
-# I'm just using this for convenience, hot-reloading etc
-RUN go install github.com/air-verse/air@latest
 
 COPY go.mod ./
 COPY go.sum ./
@@ -14,7 +12,6 @@ RUN go mod download
 # Copy the cmd directory (where your Go code is located)
 COPY cmd ./cmd
 
-# Copy the .air.toml file
-COPY .air.toml ./
+RUN CGO_ENABLED=0 go build -o /app/main ./cmd/dicegame/main.go
 
-CMD ["air", "-c", ".air.toml"]
+CMD ["/app/main"]
