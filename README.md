@@ -15,6 +15,26 @@ Simple dice game built for a technical challenge. Built with **Golang backend** 
 
 ## Backend
 
+### Deployment
+
+The API is deployed on [Hetzner](https://www.hetzner.com/) in my VPS using [Coolify](https://coolify.io/).<br>Redeploys setup on push/merge to master branch<br>
+
+#### Deployed at `ws://kkc4so8s0g4c4k0kck0kkgcs.188.245.241.81.sslip.io`
+
+#### Repo
+Repo is setup with a github action to build the app and run the tests.<br>
+Pull requests on `master` require checks to pass. <br>Rebase merging also required.
+
+### Tests
+
+Implemented tests on `cmd/internal/client_test.go` <br>
+Coverage at around 70%
+
+- Run tests with `go test -v ./...`
+
+#### Also used [Excalidraw](https://excalidraw.com/) to "draw" a broad/high-level representation of the problem<br>This was to help me visualize the problem and could be used as documentation of sorts.<br> Link [here](https://excalidraw.com/#json=6-G21rvkM22iVunuzzvjs,WrC-wmp-MJd6DvOfiOf9Kw)
+
+
 ### Setup locally
 
   1. Navigate to backend directory
@@ -33,14 +53,9 @@ go run main.go
   ```
 #### API will start on `localhost:8181`
 
-### Deployment
-
-The API is deployed on [Hetzner](https://www.hetzner.com/) in my VPS using [Coolify](https://coolify.io/).<br>Redeploys setup on push/merge to master branch<br>
-
-
-#### Deployed at `ws://kkc4so8s0g4c4k0kck0kkgcs.188.245.241.81.sslip.io`
-
   ## Frontend
+
+Bugs are expected here, the UI was made mostly for fun and to help visualize the problem(s) to solve, didn't put too much time and attention into it.
 
 ### Setup locally
 
@@ -65,8 +80,7 @@ npm install
 
 The UI is deployed on [Vercel](https://vercel.com/).<br>Redeploys also setup on push/merge to master branch<br>
 
-
-#### Deployed [here](https://dicegame-rho-seven.vercel.app)
+### Deployed [here](https://dicegame-rho-seven.vercel.app)
   ---
 
   Docker (Optional)
@@ -216,19 +230,16 @@ If an error occurs, the server will respond with an `ErrorResultMessage`:
 ### Error Codes
 The `code` field in the error response corresponds to one of the following constants:
 
-| Code | Constant          | Description                                                                 |
-|------|-------------------|-----------------------------------------------------------------------------|
-| 1    | `NO_BALANCE`      | Bet more than the balance              |
-| 2    | `NO_SESSION`      | No active session                               |
-| 3    | `NOT_PLAYING`     | Round didn't start                                |
-| 4    | `ALREADY_PLAYING` | Already in a round                             |
-| 5    | `INTERNAL`        | Internal/unexpected server error occurred                                          |
-| 6    | `INVALID_UUID`    | The provided `clientId` is invalid                       |
-| 7    | `INVALID_JASON`   | The request contains invalid JSON syntax.                                   |
-| 8    | `NOT_AUTHENTICATED` | The client is not authenticated (missing or invalid `clientId`).          |
-| 9    | `ALREADY_LOGGED`  | Already got a `clientId`                       |
-
-
-## Excalidraw
-
-https://excalidraw.com/#json=6-G21rvkM22iVunuzzvjs,WrC-wmp-MJd6DvOfiOf9Kw
+| Code | Constant           | Description                                                                 |
+|------|--------------------|-----------------------------------------------------------------------------|
+| 1    | `NO_BALANCE`       | Bet more than the balance                                                   |
+| 2    | `NO_SESSION`       | No active session                                                           |
+| 3    | `NOT_PLAYING`      | Round didn't start                                                          |
+| 4    | `ALREADY_PLAYING`  | Already in a round                                                          |
+| 5    | `INVALID_UUID`     | The provided `clientId` is invalid                                          |
+| 6    | `INVALID_JASON`    | The request contains invalid JSON syntax                                    |
+| 7    | `ALREADY_LOGGED`   | Already got a `clientId`                                                    |
+| 8    | `INVALID_BET`      | The bet amount is invalid (e.g., less than 1)                               |
+| 9    | `INVALID_CHOICE`   | The choice is invalid (e.g., not "ODD" or "EVEN")                           |
+| 10   | `UNKNOWN_KIND`     | The `kind` field in the request is unknown or unsupported                   |
+| 11   | `CLIENT_NOT_FOUND` | The `clientId` does not correspond to any active client                     |
