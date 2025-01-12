@@ -2,6 +2,7 @@ package client
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"log/slog"
 	"sync"
@@ -19,27 +20,30 @@ const (
 	NO_SESSION
 	NOT_PLAYING
 	ALREADY_PLAYING
-	INTERNAL
 	INVALID_UUID
 	INVALID_JASON
-	NOT_AUTHENTICATED
 	ALREADY_LOGGED
+	INVALID_BET
+	INVALID_CHOICE
+	UNKNOWN_KIND
+	CLIENT_NOT_FOUND
 )
 
 type cError int
 
-const Timeout = 300 // 5min
-
-// ideally i'd not use UUID's for the the ID's and use an agreed list of constant codes for the "kind" of message
-type EndPlayMessage struct {
-	Kind     string `json:"kind"`
-	ClientId string `json:"clientId"`
-}
+const Timeout = 5 // 5min
 
 type EndPlayResultMessage struct {
 	Kind   string `json:"kind"`
 	Profit int    `json:"result"`
 	Wallet int    `json:"wallet"`
+}
+
+type PlayMessage struct {
+	Kind     string `json:"kind"`
+	ClientId string `json:"clientId"`
+	Bet      int    `json:"bet"`
+	Choice   string `json:"choice"`
 }
 
 type PlayResultMessage struct {
@@ -48,9 +52,8 @@ type PlayResultMessage struct {
 	Roll   int    `json:"roll"`
 }
 
-type PlayMessage struct {
-	Bet    int    `json:"bet"`
-	Choice string `json:"choice"`
+type StartSessionResultMessage struct {
+	Kind string `json:"kind"`
 }
 
 type WalletResultMessage struct {
@@ -124,11 +127,20 @@ func (s *Store) AddClient(c *Client) {
 }
 
 func SessionExpire() {
-	timer := time.NewTicker(1 * time.Minute)
+	// i'm not sure if this is good practice
+	// i know about channels and contexts which i'm guessing are usually used for this
+	// my thought process is that this is supposed to keep running and if it isn't
+	// the server isn't either
+	// again, i'm still not sure about it but that's how i thought about it
+	// i'd gladly be corrected
+	timer := time.NewTicker(2 * time.Second)
 
 	for range timer.C {
+		// only doing this loop in the context of this project
+		// in a real product obviously we wouldn't do this
 		for _, c := range St.Clients {
 			if time.Now().Unix()-c.Last_seen > Timeout {
+				slog.Debug("expiring client")
 				St.DisconnectClient(c)
 			}
 		}
@@ -151,7 +163,42 @@ func (c *Client) Init() {
 	c.Last_seen = time.Now().Unix()
 }
 
-func (c *Client) Play(message *DefaultMessage) (*ErrorResultMessage, error) {
+func (c *Client) Disconnect() {
+	St.DisconnectClient(c)
+}
+
+func (c *Client) HandleMessageErrors(cErr *ErrorResultMessage, err error, str string) {
+	if err != nil {
+		log.Printf("%s error: %+v", str, err)
+		err := c.SendMessage(err)
+		if err != nil {
+			log.Printf("SendMessage error: %+v", err)
+		}
+	}
+	if cErr != nil {
+		err := c.SendErrorMessage(cErr)
+		if err != nil {
+			log.Printf("SendErrorMessage error: %+v", err)
+			err = c.SendMessage(err)
+			if err != nil {
+				log.Printf("SendMessage error: %+v", err)
+			}
+		}
+	}
+}
+
+func (c *Client) Play(msg *DefaultMessage) (*ErrorResultMessage, error) {
+	if msg.Kind != "PLAY" || msg.ClientId == "" {
+		cError := &ErrorResultMessage{
+			Kind:    "ERROR",
+			Message: "Invalid message",
+			Code:    INVALID_JASON,
+		}
+
+		return cError, nil
+	}
+
+	// needs to start a session/round first
 	if c.Session == nil {
 		cErr := &ErrorResultMessage{
 			Kind:    "ERROR",
@@ -162,18 +209,9 @@ func (c *Client) Play(message *DefaultMessage) (*ErrorResultMessage, error) {
 		return cErr, nil
 	}
 
-	p := &PlayMessage{
-		Bet:    message.Bet,
-		Choice: message.Choice,
-	}
-
-	if p.Bet > c.Wallet {
-		cErr := &ErrorResultMessage{
-			Kind:    "ERROR",
-			Message: "Insufficient balance",
-			Code:    NO_BALANCE,
-		}
-
+	var p *PlayMessage
+	p, cErr := c.ValidatePlay(msg)
+	if cErr != nil {
 		return cErr, nil
 	}
 
@@ -221,6 +259,38 @@ func (c *Client) Play(message *DefaultMessage) (*ErrorResultMessage, error) {
 	return nil, nil
 }
 
+func (c *Client) ValidatePlay(msg *DefaultMessage) (pMsg *PlayMessage, cErr *ErrorResultMessage) {
+	var eMessage string
+	var code cError
+
+	switch {
+	case msg.Bet > c.Wallet:
+		eMessage = "Insufficient points"
+		code = NO_BALANCE
+	case msg.Bet < 1:
+		eMessage = "Invalid bet"
+		code = INVALID_BET
+	case msg.Choice != "ODD" && msg.Choice != "EVEN":
+		eMessage = "Invalid choice (ODD or EVEN)"
+		code = INVALID_CHOICE
+	}
+
+	if code != 0 {
+		cErr = &ErrorResultMessage{
+			Kind:    "ERROR",
+			Message: eMessage,
+			Code:    code,
+		}
+		return
+	}
+
+	pMsg = &PlayMessage{
+		Bet:    msg.Bet,
+		Choice: msg.Choice,
+	}
+	return
+}
+
 func (c *Client) Auth(conn *websocket.Conn) (*Client, error) {
 	if c.Id == "" {
 		c.Init()
@@ -236,6 +306,8 @@ func (c *Client) Auth(conn *websocket.Conn) (*Client, error) {
 
 	addr := conn.RemoteAddr().String()
 	// this is a bit RAW and ROUGH but you get the point
+	// only doing this loop in the context of this project
+	// in a real product obviously we wouldn't do this
 	for _, c := range St.Clients {
 		if c.Ip == addr {
 			err := c.SendMessage(&ErrorResultMessage{
@@ -307,7 +379,7 @@ func (c *Client) StartSession(msg *DefaultMessage) (*ErrorResultMessage, error) 
 		},
 	}
 
-	err := c.SendMessage(&InfoResultMessage{
+	err := c.SendMessage(&StartSessionResultMessage{
 		Kind: "STARTPLAY",
 	})
 	if err != nil {
@@ -368,11 +440,13 @@ func (c *Client) EndSession(msg *DefaultMessage) (*ErrorResultMessage, error) {
 func (c *Client) SendMessage(msg interface{}) error {
 	data, err := json.Marshal(msg)
 	if err != nil {
+		fmt.Println("Error marshalling message", err)
 		return err
 	}
 
 	err = c.Conn.WriteMessage(websocket.TextMessage, data)
 	if err != nil {
+		fmt.Println("Error sending message", err)
 		return err
 	}
 
@@ -387,21 +461,6 @@ func (c *Client) SendErrorMessage(cErr *ErrorResultMessage) error {
 	}
 
 	return nil
-}
-
-func (c *Client) SendIErrorMessage(err error) {
-	// idk if this only makes sense to me but the logic behind using these 2 erros types
-	// is like differentiating between a 400's and 500's
-	// 400's i assume the program is actually working and report to the client with a SendIErrorMessage
-	// 500's i try reporting to the client but assume it might not work and log the error
-
-	cErr := &ErrorResultMessage{
-		Kind:    "ERROR",
-		Message: err.Error(),
-		Code:    INTERNAL,
-	}
-
-	c.SendErrorMessage(cErr)
 }
 
 // added this for fun i guess, could be cool to show on UI
@@ -441,6 +500,7 @@ func HandleClientID(conn *websocket.Conn, msg *DefaultMessage) *ErrorResultMessa
 		return &ErrorResultMessage{
 			Kind:    "ERROR",
 			Message: "invalid client id, must be UUID",
+			Code:    INVALID_UUID,
 		}
 	}
 
@@ -449,6 +509,7 @@ func HandleClientID(conn *websocket.Conn, msg *DefaultMessage) *ErrorResultMessa
 		return &ErrorResultMessage{
 			Kind:    "ERROR",
 			Message: "client not found",
+			Code:    CLIENT_NOT_FOUND,
 		}
 	}
 
