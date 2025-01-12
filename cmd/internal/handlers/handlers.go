@@ -47,8 +47,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				websocket.CloseNormalClosure,
 				websocket.CloseGoingAway,
 				websocket.CloseNoStatusReceived,
+				websocket.CloseAbnormalClosure,
 			) {
-
 				client.St.DisconnectClient(c)
 				break
 			}
@@ -64,7 +64,6 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					Code:    client.INVALID_JASON,
 				}
 
-				log.Printf("JSON syntax error: %+v", err)
 				err := c.SendMessage(cErr)
 				if err != nil {
 					log.Printf("SendConnMessage error: %+v", err)
@@ -72,16 +71,20 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			log.Printf("Read error: %+v", err)
-			continue
+			// Session expired
+			slog.Debug("Read Message error")
+			break
 		}
 
 		slog.Debug("Received message", slog.String("message", string(msg.Kind)))
 		if msg.ClientId != "" {
 			cErr := client.HandleClientID(conn, msg)
 			if cErr != nil {
-				log.Printf("HandleClientID error: %+v", cErr)
-				c.SendMessage(cErr)
+				err := c.SendMessage(cErr)
+				if err != nil {
+					log.Printf("SendConnMessage error: %+v", err)
+				}
+
 				continue
 			}
 		}
@@ -90,75 +93,37 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 		switch string(msg.Kind) {
 		case "PLAY":
 			cErr, err := c.Play(msg)
-			if err != nil {
-				log.Printf("Play error: %+v", err)
-				c.SendIErrorMessage(err)
-			}
-			if cErr != nil {
-				err := c.SendErrorMessage(cErr)
-				if err != nil {
-					log.Printf("SendErrorMessage error: %+v", err)
-					c.SendIErrorMessage(err)
-				}
-			}
+			c.HandleMessageErrors(cErr, err, "Play")
 		case "WALLET":
 			cErr, err := c.GetWallet(msg)
-			if err != nil {
-				log.Printf("GetWallet error: %+v", err)
-				c.SendIErrorMessage(err)
-			}
-			if cErr != nil {
-				err := c.SendErrorMessage(cErr)
-				if err != nil {
-					log.Printf("SendErrorMessage error: %+v", err)
-					c.SendIErrorMessage(err)
-				}
-			}
+			c.HandleMessageErrors(cErr, err, "GetWallet")
 		case "STARTPLAY":
 			cErr, err := c.StartSession(msg)
-			if err != nil {
-				log.Printf("StartSession error: %+v", err)
-				c.SendIErrorMessage(err)
-			}
-
-			if cErr != nil {
-				err := c.SendErrorMessage(cErr)
-				if err != nil {
-					log.Printf("SendErrorMessage error: %+v", err)
-					c.SendIErrorMessage(err)
-				}
-			}
+			c.HandleMessageErrors(cErr, err, "StartSession")
 		case "ENDPLAY":
 			cErr, err := c.EndSession(msg)
-			if err != nil {
-				log.Printf("EndSession error: %+v", err)
-				c.SendIErrorMessage(err)
-			}
-			if cErr != nil {
-				err := c.SendErrorMessage(cErr)
-				if err != nil {
-					log.Printf("SendErrorMessage error: %+v", err)
-					c.SendIErrorMessage(err)
-				}
-			}
+			c.HandleMessageErrors(cErr, err, "EndSession")
 		case "AUTH":
 			c, err = c.Auth(conn)
 			if err != nil {
 				log.Printf("Auth error: %+v", err)
-				c.SendIErrorMessage(err)
+				err = c.SendMessage(err)
+				if err != nil {
+					log.Printf("SendMessage error: %+v", err)
+				}
 			}
 		default:
-			msg := &client.InfoResultMessage{
-				Kind: "UNKNOWN_KIND",
+			msg := &client.ErrorResultMessage{
+				Kind:    "ERROR",
+				Code:    client.UNKNOWN_KIND,
+				Message: "unknown message kind",
 			}
 
 			err := c.SendMessage(msg)
 			if err != nil {
 				log.Printf("SendMessage error: %+v", err)
-				c.SendIErrorMessage(err)
+				c.SendMessage(err)
 			}
-
-			log.Printf("Unknown message: %+v", msg)
 		}
 	}
 }
