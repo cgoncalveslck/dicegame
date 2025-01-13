@@ -19,7 +19,7 @@ Simple dice game built for a technical challenge. Built with **Golang backend** 
 
 The API is deployed on [Hetzner](https://www.hetzner.com/) in my VPS using [Coolify](https://coolify.io/).<br>Redeploys setup on push/merge to master branch<br>
 
-#### Deployed at `ws://kkc4so8s0g4c4k0kck0kkgcs.188.245.241.81.sslip.io`
+#### Deployed at `wss://kkc4so8s0g4c4k0kck0kkgcs.188.245.241.81.sslip.io`
 
 #### Repo
 Repo is setup with a github action to build the app and run the tests.<br>
