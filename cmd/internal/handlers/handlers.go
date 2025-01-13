@@ -23,8 +23,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Printf("Upgrade failed: %+v", err)
 
-		// Send an HTTP response to the client
-		w.WriteHeader(http.StatusBadRequest) // 400 Bad Request
+		w.WriteHeader(http.StatusBadRequest)
 		w.Write([]byte("WebSocket upgrade failed: " + err.Error()))
 		return
 	}
