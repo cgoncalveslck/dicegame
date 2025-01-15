@@ -222,9 +222,10 @@ func (c *Client) Play(msg *DefaultMessage) (*ErrorResultMessage, error) {
 	var win bool
 	switch p.Choice {
 	case "ODD":
-		win = num%2 != 0
+		// this should be correct and faster but i didn't check
+		win = num&1 != 0
 	case "EVEN":
-		win = num%2 == 0
+		win = num&1 == 0
 	}
 
 	var res string
