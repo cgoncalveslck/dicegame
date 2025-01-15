@@ -22,6 +22,9 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("Upgrade failed: %+v", err)
+
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte("WebSocket upgrade failed: " + err.Error()))
 		return
 	}
 	defer func() {
